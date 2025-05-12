@@ -9,12 +9,38 @@ import scsParser from './syntax/scsParser.js';
 import { Idtf_systemContext, Attr_listContext } from './syntax/scsParser.js';
 import { ScClientWrapper } from './scsServer.js';
 import scsListener from './syntax/scsListener.js';
+import {ScClient} from 'ts-sc-client';
 
 interface ParseError {
     line: number,
     offset: number,
     len: number,
     msg: string
+}
+
+// Интерфейс для позиции в ответе parse_scs
+interface ParsePosition {
+    beginLine: number;
+    beginIndex: number;
+    endLine: number;
+    endIndex: number;
+}
+
+// Интерфейс для символа в ответе parse_scs
+interface ParseSymbol {
+    name: string;
+    range: ParsePosition;
+}
+
+// Интерфейс для ответа parse_scs
+interface ParseResult {
+    root?: any; // AST, не используется
+    errors: Array<{
+        token?: string;
+        msg: string;
+        position: ParsePosition;
+    }>;
+    symbols: ParseSymbol[];
 }
 
 class SCsErrorListener implements ErrorListener<any> {
@@ -192,6 +218,70 @@ export class SCsParsedData {
     // send diagnostic callback (shall be set by scsSession later)
     public sendDiagnostic: undefined | ((params: vs.PublishDiagnosticsParams) => void);
 
+    async parseDocumentSCMachine(docText: string, docUri: string): Promise<void> {
+        docUri = makeUri(docUri);
+        const finfo = new FileInfo(docUri);
+        this.files.set(docUri, finfo);
+
+        try {
+            // Send SCs code to SC-machine
+            const result: ParseResult = await new Promise((resolve, reject) => {
+                if (!this.conn.connection) {
+                    reject(new Error('SC-machine connection is not initialized'));
+                    return;
+                }
+                this.conn.connection.parseSCs(docText)
+            });
+
+            // Process errors
+            if (result.errors) {
+                result.errors.forEach((err) => {
+                    const len = err.position.endIndex - err.position.beginIndex;
+                    finfo.appendError({
+                        line: err.position.beginLine,
+                        offset: err.position.beginIndex,
+                        len: len >= 0 ? len : 0,
+                        msg: err.msg,
+                    });
+                });
+            }
+
+            // Process symbols
+            if (result.symbols) {
+                result.symbols.forEach((symbol) => {
+                    finfo.appendSymbol(symbol.name, {
+                        start: {
+                            line: symbol.range.beginLine,
+                            column: symbol.range.beginIndex + 1, // Adjust for 1-based column indexing
+                        },
+                        end: {
+                            line: symbol.range.endLine,
+                            column: symbol.range.endIndex,
+                        },
+                    });
+                });
+            }
+
+            // Send diagnostics
+            this.doSendDiagnostic({
+                uri: docUri,
+                diagnostics: finfo.getErrors(),
+            });
+        } catch (e: any) {
+            this.console.log(`Error parsing SCs with SC-machine: ${e.message || e}`);
+            finfo.appendError({
+                line: 1,
+                offset: 0,
+                len: 0,
+                msg: `Failed to parse SCs code: ${e.message || e}`,
+            });
+            this.doSendDiagnostic({
+                uri: docUri,
+                diagnostics: finfo.getErrors(),
+            });
+        }
+    }
+
     public parseDocumentANTLR(docText: string, docUri: string) {
 
         docUri = makeUri(docUri);
@@ -233,14 +323,9 @@ export class SCsParsedData {
         }
     }
 
-    public parseDocumentOnline(docText: string, docUri: string) {
-        // TODO: placeholder for now
-        this.parseDocumentANTLR(docText, docUri);
-    }
-
     public parseDocument(docText: string, docUri: string) {
         if (this.conn && this.conn.isOnline) {
-            this.parseDocumentOnline(docText, docUri);
+            this.parseDocumentSCMachine(docText, docUri);
         }
         else {
             this.parseDocumentANTLR(docText, docUri);
