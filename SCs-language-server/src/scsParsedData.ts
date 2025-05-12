@@ -18,7 +18,7 @@ interface ParseError {
     msg: string
 }
 
-// Интерфейс для позиции в ответе parse_scs
+// Interface for position in answer of parse_scs
 interface ParsePosition {
     beginLine: number;
     beginIndex: number;
@@ -26,15 +26,15 @@ interface ParsePosition {
     endIndex: number;
 }
 
-// Интерфейс для символа в ответе parse_scs
+// Interface for symbol in answer of parse_scs
 interface ParseSymbol {
     name: string;
     range: ParsePosition;
 }
 
-// Интерфейс для ответа parse_scs
+// Interface for answer of parse_scs
 interface ParseResult {
-    root?: any; // AST, не используется
+    root?: any; // AST, not using
     errors: Array<{
         token?: string;
         msg: string;
